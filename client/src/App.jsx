@@ -8,8 +8,9 @@ function App() {
   const [pseudo, setPseudo] = useState("");
   const [room, setRoom] = useState("");
   const [players, setPlayers] = useState([]);
+  const [isReady, setIsReady] = useState(false);
 
-  // Connexion socket initiale
+  // Connexion socket + joueurs
   useEffect(() => {
     socket.on("connect", () => {
       console.log("🟢 Connecté au serveur avec ID :", socket.id);
@@ -20,10 +21,22 @@ function App() {
       setPlayers(playersList);
     });
 
-    // Nettoyage des événements
     return () => {
       socket.off("connect");
       socket.off("playersInRoom");
+    };
+  }, []);
+
+  // Démarrage de la partie
+  useEffect(() => {
+    socket.on("startGame", () => {
+      console.log("🚀 La partie commence !");
+      alert("🎮 La partie commence !");
+      // TODO : ici tu peux afficher un composant Game
+    });
+
+    return () => {
+      socket.off("startGame");
     };
   }, []);
 
@@ -51,6 +64,16 @@ function App() {
               ))}
             </ul>
           </div>
+          <button
+            onClick={() => {
+              socket.emit("playerReady", { room, id: socket.id });
+              setIsReady(true);
+            }}
+            disabled={isReady}
+            className="mt-6 px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded disabled:opacity-50"
+          >
+            {isReady ? "En attente des autres..." : "✅ Je suis prêt"}
+          </button>
         </div>
       )}
     </>
