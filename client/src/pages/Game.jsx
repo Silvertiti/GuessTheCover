@@ -9,25 +9,45 @@ function Game({ socket, room, pseudo, players, imageUrl, roundInfo }) {
   const [artistBy, setArtistBy] = useState("");
   const [albumBy, setAlbumBy] = useState("");
   const [timer, setTimer] = useState(10);
+  const MAX_STEP = 7;
+  const [notifiedServer, setNotifiedServer] = useState(false);
 
   useEffect(() => {
     setPixelStep(0);
-    setTimer(10);
+    setTimer(20);
     setFoundArtist(false);
     setFoundAlbum(false);
     setArtistBy("");
     setAlbumBy("");
+    setNotifiedServer(false);
   }, [imageUrl]);
 
+  // Pixelation progressive
   useEffect(() => {
-    if (imageUrl && pixelStep < 7 && (!foundArtist || !foundAlbum)) {
+    if (imageUrl && pixelStep < MAX_STEP && (!foundArtist || !foundAlbum)) {
       const interval = setInterval(() => {
-        setPixelStep((prev) => prev + 1);
+        setPixelStep((prev) => {
+          const nextStep = prev + 1;
+          if (nextStep === MAX_STEP && !notifiedServer) {
+            socket.emit("imageFullyRevealed", { room });
+            setNotifiedServer(true);
+          }
+          return nextStep;
+        });
       }, 1500);
       return () => clearInterval(interval);
     }
-  }, [imageUrl, pixelStep, foundArtist, foundAlbum]);
+  }, [
+    imageUrl,
+    pixelStep,
+    foundArtist,
+    foundAlbum,
+    notifiedServer,
+    room,
+    socket,
+  ]);
 
+  // Timer visuel
   useEffect(() => {
     const countdown = setInterval(() => {
       setTimer((prev) => {
@@ -41,6 +61,7 @@ function Game({ socket, room, pseudo, players, imageUrl, roundInfo }) {
     return () => clearInterval(countdown);
   }, [imageUrl]);
 
+  // Mise à jour des réponses trouvées
   useEffect(() => {
     socket.on(
       "answerUpdate",
@@ -55,7 +76,7 @@ function Game({ socket, room, pseudo, players, imageUrl, roundInfo }) {
     return () => {
       socket.off("answerUpdate");
     };
-  }, []);
+  }, [socket]);
 
   const sendGuess = () => {
     if (guess.trim()) {
@@ -76,6 +97,13 @@ function Game({ socket, room, pseudo, players, imageUrl, roundInfo }) {
       {imageUrl && (
         <div className="flex flex-col items-center gap-4">
           <PixelatedImage src={imageUrl} step={pixelStep} />
+
+          <div className="w-[256px] h-2 bg-gray-700 mt-2 rounded overflow-hidden">
+            <div
+              className="bg-green-400 h-full transition-all"
+              style={{ width: `${(pixelStep / MAX_STEP) * 100}%` }}
+            ></div>
+          </div>
 
           <div className="text-xl mt-4">
             <p>

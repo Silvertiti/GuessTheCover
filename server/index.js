@@ -6,16 +6,10 @@ const mysql = require("mysql2/promise");
 const path = require("path");
 
 const app = express();
-
-// Autoriser les requêtes CORS
 app.use(cors());
-
-// Servir les images locales
 app.use("/images", express.static(path.join(__dirname, "public/images")));
 
 const server = http.createServer(app);
-
-// ✅ CORS correct ici
 const io = new Server(server, {
   cors: {
     origin: "http://localhost:5173",
@@ -24,35 +18,32 @@ const io = new Server(server, {
   },
 });
 
-// Connexion MySQL
 let db;
 (async () => {
   db = await mysql.createConnection({
     host: "localhost",
     user: "root",
-    password: "", // ajuste si besoin
+    password: "",
     database: "GuessTheCover",
   });
   console.log("📦 Connecté à MySQL");
 })();
 
-// États en mémoire
-const rooms = {}; // { room: [ { id, pseudo, ready } ] }
-const scores = {}; // { room: { pseudo: score } }
-const rounds = {}; // { room: { round, totalRounds } }
-const currentAnswers = {}; // { room: { artist, album, ... } }
+const rooms = {};
+const scores = {};
+const rounds = {};
+const currentAnswers = {};
+const endTimers = {};
 
 io.on("connection", (socket) => {
   console.log("🧩 Connexion :", socket.id);
 
   socket.on("joinRoom", ({ pseudo, room }) => {
     socket.join(room);
-
     if (!rooms[room]) rooms[room] = [];
-    rooms[room].push({ id: socket.id, pseudo, ready: false });
-
     if (!scores[room]) scores[room] = {};
     if (!scores[room][pseudo]) scores[room][pseudo] = 0;
+    rooms[room].push({ id: socket.id, pseudo, ready: false });
 
     io.to(room).emit("playersInRoom", rooms[room]);
   });
@@ -100,11 +91,12 @@ io.on("connection", (socket) => {
         artistBy: state.artistBy,
         albumBy: state.albumBy,
       });
-    }
 
-    if (state.foundArtist && state.foundAlbum) {
-      clearTimeout(state.timeoutId);
-      endRound(room);
+      // Si tout est trouvé, terminer le round immédiatement
+      if (state.foundArtist && state.foundAlbum) {
+        clearTimeout(endTimers[room]);
+        endRound(room);
+      }
     }
   });
 
@@ -119,9 +111,22 @@ io.on("connection", (socket) => {
       p.ready = false;
     });
     rounds[room] = { round: 0, totalRounds: 5 };
-
-    io.to(room).emit("scoreboard", scores[room]); // <- mise à jour côté client
+    io.to(room).emit("scoreboard", scores[room]);
     io.to(room).emit("goToLobby");
+  });
+
+  socket.on("imageFullyRevealed", ({ room }) => {
+    const state = currentAnswers[room];
+    if (!state) return;
+
+    if (!state.foundArtist || !state.foundAlbum) {
+      console.log(
+        `⏳ Lancement du timer 10 sec après pixelStep 7 pour ${room}`
+      );
+      endTimers[room] = setTimeout(() => {
+        endRound(room);
+      }, 10000);
+    }
   });
 
   socket.on("disconnect", () => {
@@ -132,7 +137,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// 🧠 Gestion du round
 async function startNextRound(room) {
   if (!rounds[room]) rounds[room] = { round: 0, totalRounds: 5 };
   rounds[room].round += 1;
@@ -153,8 +157,6 @@ async function startNextRound(room) {
     `🎵 [${room}] Round ${rounds[room].round} - ${cover.artist} / ${cover.album}`
   );
 
-  const timeoutId = setTimeout(() => endRound(room), 10000);
-
   currentAnswers[room] = {
     artist: cover.answer_artist.toLowerCase(),
     album: cover.answer_album.toLowerCase(),
@@ -162,7 +164,6 @@ async function startNextRound(room) {
     foundAlbum: false,
     artistBy: "",
     albumBy: "",
-    timeoutId,
   };
 
   io.to(room).emit("roundInfo", rounds[room]);
@@ -176,6 +177,7 @@ function endRound(room) {
   const data = currentAnswers[room];
   if (!data) return;
 
+  console.log(`⛔ Fin du round ${rounds[room].round} pour ${room}`);
   io.to(room).emit("roundFinished", {
     artist: data.artist,
     album: data.album,
@@ -185,11 +187,11 @@ function endRound(room) {
 
   io.to(room).emit("scoreboard", scores[room]);
 
+  delete currentAnswers[room];
+
   setTimeout(() => {
     startNextRound(room);
   }, 10000);
-
-  delete currentAnswers[room];
 }
 
 server.listen(3001, () => {
