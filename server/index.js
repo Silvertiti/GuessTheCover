@@ -38,12 +38,13 @@ const endTimers = {};
 io.on("connection", (socket) => {
   console.log("🧩 Connexion :", socket.id);
 
-  socket.on("joinRoom", ({ pseudo, room }) => {
+  socket.on("joinRoom", ({ pseudo, room, avatar }) => {
     socket.join(room);
     if (!rooms[room]) rooms[room] = [];
     if (!scores[room]) scores[room] = {};
     if (!scores[room][pseudo]) scores[room][pseudo] = 0;
-    rooms[room].push({ id: socket.id, pseudo, ready: false });
+
+    rooms[room].push({ id: socket.id, pseudo, avatar, ready: false });
 
     io.to(room).emit("playersInRoom", rooms[room]);
   });

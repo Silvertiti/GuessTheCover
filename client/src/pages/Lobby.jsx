@@ -33,20 +33,32 @@ function Lobby({ socket, players, room, pseudo, scoreboard, roundInfo }) {
   }, [roundInfo]);
 
   return (
-    <div className="text-white text-center mt-10 text-3xl">
-      <p>
-        🎮 Salle d'attente : <span className="text-blue-400">{room}</span>
+    <div className="text-white text-center mt-10">
+      <p className="text-xl">
+        🎮 Salle d'attente : <span className="text-purple-400">{room}</span>
       </p>
 
-      <div className="mt-6 text-xl">
-        Joueurs :
-        <ul className="mt-2">
+      <div className="text-xl mt-6">
+        <p className="text-2xl font-bold text-white mb-2">
+          👥 Joueurs dans la room :
+        </p>
+        <div className="flex flex-wrap justify-center gap-6">
           {players.map((p) => (
-            <li key={p.id} className="text-green-400">
-              {p.pseudo}
-            </li>
+            <div
+              key={p.id}
+              className="player-card flex flex-col items-center p-4"
+            >
+              <div className="avatar-circle">
+                <img
+                  src={p.avatar}
+                  alt={p.pseudo}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <p className="mt-2">{p.pseudo}</p>
+            </div>
           ))}
-        </ul>
+        </div>
       </div>
 
       {isHost && !isReady && (
@@ -71,7 +83,7 @@ function Lobby({ socket, players, room, pseudo, scoreboard, roundInfo }) {
       <button
         onClick={handleReady}
         disabled={isReady}
-        className="mt-6 px-6 py-2 bg-green-500 hover:bg-green-600 rounded disabled:opacity-50"
+        className="mt-6 px-6 py-2 bg-green-500 hover:bg-green-600 rounded disabled:opacity-50 text-white text-lg"
       >
         {isReady ? "En attente des autres..." : "✅ Je suis prêt"}
       </button>
@@ -95,7 +107,7 @@ function Lobby({ socket, players, room, pseudo, scoreboard, roundInfo }) {
               </li>
             ))}
           </ul>
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-gray-400 mt-2">
             Round {roundInfo.round} / {roundInfo.totalRounds}
           </p>
         </div>

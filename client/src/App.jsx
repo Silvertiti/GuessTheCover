@@ -5,6 +5,7 @@ import Lobby from "./pages/Lobby";
 import Game from "./pages/Game";
 import RoundRecap from "./pages/RoundRecap";
 import Scoreboard from "./pages/Scoreboard";
+import "./App.css";
 
 const socket = io("http://localhost:3001");
 
@@ -18,13 +19,24 @@ function App() {
   const [roundInfo, setRoundInfo] = useState({ round: 0, totalRounds: 5 });
   const [scores, setScores] = useState({});
   const [recapData, setRecapData] = useState(null);
+  const [avatar, setAvatar] = useState("");
 
   useEffect(() => {
     socket.on("connect", () => {
       console.log("🟢 Connecté au serveur", socket.id);
     });
 
-    socket.on("playersInRoom", (list) => setPlayers(list));
+    socket.on("playersInRoom", (list) => {
+      setPlayers(list);
+
+      // Vérifie si l'utilisateur est dans la room (confirmation join)
+      const isInRoom = list.some(
+        (p) => p.pseudo === pseudo && p.avatar === avatar
+      );
+      if (isInRoom && view === "home") {
+        setView("lobby");
+      }
+    });
 
     socket.on("startGame", () => {
       setView("game");
@@ -72,13 +84,14 @@ function App() {
       socket.off("goToLobby");
       socket.off("gameOver");
     };
-  }, [imageUrl]);
+  }, [pseudo, avatar, imageUrl, view]);
 
-  const handleJoin = ({ pseudo, room }) => {
+  const handleJoin = ({ pseudo, room, avatar }) => {
     setPseudo(pseudo);
     setRoom(room);
-    setView("lobby");
-    socket.emit("joinRoom", { pseudo, room });
+    setAvatar(avatar);
+    socket.emit("joinRoom", { pseudo, room, avatar });
+    setView("lobby"); // ← important pour naviguer vers le lobby
   };
 
   const handleReplay = () => {
