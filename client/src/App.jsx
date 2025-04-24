@@ -11,10 +11,14 @@ function App() {
   const [players, setPlayers] = useState([]);
   const [isReady, setIsReady] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
-  const [pixelStep, setPixelStep] = useState(0); // step = 0 → 2x2
+  const [pixelStep, setPixelStep] = useState(0);
   const MAX_STEP = 7;
   const [guess, setGuess] = useState("");
-  const [winner, setWinner] = useState("");
+
+  const [foundArtist, setFoundArtist] = useState(false);
+  const [foundAlbum, setFoundAlbum] = useState(false);
+  const [artistBy, setArtistBy] = useState("");
+  const [albumBy, setAlbumBy] = useState("");
 
   useEffect(() => {
     socket.on("connect", () => {
@@ -22,17 +26,32 @@ function App() {
     });
 
     socket.on("playersInRoom", (list) => setPlayers(list));
+
     socket.on("startGame", () => {
       console.log("🚀 Partie lancée");
+      setFoundArtist(false);
+      setFoundAlbum(false);
+      setArtistBy("");
+      setAlbumBy("");
     });
 
     socket.on("gameImage", ({ imageUrl }) => {
       setImageUrl(imageUrl);
-      setPixelStep(0); // ← on démarre pixelisé
+      setPixelStep(0);
     });
 
-    socket.on("correctGuess", (pseudoGagnant) => {
-      setWinner(pseudoGagnant);
+    socket.on(
+      "answerUpdate",
+      ({ foundArtist, foundAlbum, artistBy, albumBy }) => {
+        setFoundArtist(foundArtist);
+        setFoundAlbum(foundAlbum);
+        setArtistBy(artistBy);
+        setAlbumBy(albumBy);
+      }
+    );
+
+    socket.on("roundFinished", (data) => {
+      console.log("🏁 Manche terminée");
     });
 
     return () => {
@@ -40,18 +59,20 @@ function App() {
       socket.off("playersInRoom");
       socket.off("startGame");
       socket.off("gameImage");
-      socket.off("correctGuess");
+      socket.off("answerUpdate");
+      socket.off("roundFinished");
     };
   }, []);
 
   useEffect(() => {
-    if (imageUrl && pixelStep < MAX_STEP && !winner) {
+    if (imageUrl && pixelStep < MAX_STEP && !(foundArtist && foundAlbum)) {
       const interval = setInterval(() => {
         setPixelStep((prev) => prev + 1);
-      }, 5000); // ⏱️
+      }, 5000);
       return () => clearInterval(interval);
     }
-  }, [imageUrl, pixelStep, winner]);
+  }, [imageUrl, pixelStep, foundArtist, foundAlbum]);
+
   const handleJoin = ({ pseudo, room }) => {
     setPseudo(pseudo);
     setRoom(room);
@@ -71,14 +92,6 @@ function App() {
   };
 
   if (!pseudo) return <Home onJoin={handleJoin} />;
-
-  if (winner) {
-    return (
-      <div className="text-white text-center mt-20 text-3xl">
-        🎉 {winner} a gagné la manche !
-      </div>
-    );
-  }
 
   return (
     <div className="text-white text-center mt-10 text-3xl">
@@ -108,16 +121,34 @@ function App() {
       {imageUrl && (
         <div className="mt-10 flex flex-col items-center gap-4">
           <PixelatedImage src={imageUrl} step={pixelStep} />
+
+          <div className="text-xl mt-4">
+            <p>
+              Artiste :{" "}
+              <span className={foundArtist ? "text-green-400" : "text-red-400"}>
+                {foundArtist ? `Trouvé par ${artistBy}` : "Non trouvé"}
+              </span>
+            </p>
+            <p>
+              Album :{" "}
+              <span className={foundAlbum ? "text-green-400" : "text-red-400"}>
+                {foundAlbum ? `Trouvé par ${albumBy}` : "Non trouvé"}
+              </span>
+            </p>
+          </div>
+
           <input
             type="text"
-            placeholder="Devine l'album"
+            placeholder="Devine artiste ou album"
             value={guess}
             onChange={(e) => setGuess(e.target.value)}
             className="px-4 py-2 text-black rounded"
+            disabled={foundArtist && foundAlbum}
           />
           <button
             onClick={sendGuess}
             className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded"
+            disabled={foundArtist && foundAlbum}
           >
             Valider
           </button>
