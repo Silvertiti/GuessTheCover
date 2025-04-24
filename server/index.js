@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
+const mysql = require("mysql2/promise");
 
 const app = express();
 app.use(cors());
@@ -12,6 +13,14 @@ const io = new Server(server, {
     origin: "http://localhost:5173",
     methods: ["GET", "POST"],
   },
+});
+const mysql = require("mysql2/promise");
+
+const db = await mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "", // ton mot de passe WAMP (souvent vide par défaut)
+  database: "GuessTheCover",
 });
 
 const rooms = {}; // { roomName: [ { id, pseudo, ready } ] }

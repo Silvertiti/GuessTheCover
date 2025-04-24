@@ -1,0 +1,89 @@
+import requests
+import os
+
+# Chemin vers le dossier d’images utilisé par le serveur Node.js
+IMAGE_DIR = "server/public/images"
+
+def get_cover_and_metadata(artist, album):
+    search_url = f"https://musicbrainz.org/ws/2/release/?query=album:{album}%20AND%20artist:{artist}&fmt=json&inc=release-groups"
+    headers = {
+        "User-Agent": "GuessTheCoverApp/1.0 ( contact@example.com )"
+    }
+
+    res = requests.get(search_url, headers=headers).json()
+    if 'releases' not in res or not res['releases']:
+        print(f"❌ Aucun résultat pour : {artist} - {album}")
+        return None
+
+    try:
+        release = res['releases'][0]
+        release_id = release['id']
+        cover_url = f"https://coverartarchive.org/release/{release_id}/front"
+        img_data = requests.get(cover_url).content
+
+        # Nettoyage du nom de fichier
+        filename = f"{artist} - {album}.jpg".replace("/", "_").replace(":", "-").replace('"', "").replace("'", "").replace("?", "")
+        filepath = os.path.join(IMAGE_DIR, filename)
+        os.makedirs(IMAGE_DIR, exist_ok=True)
+
+        # Enregistrement local dans le dossier du serveur
+        with open(filepath, 'wb') as f:
+            f.write(img_data)
+
+        # Métadonnées
+        language = release.get("text-representation", {}).get("language", "")
+        date = release.get("date", "")
+        group_id = release.get("release-group", {}).get("id", "")
+
+        genre = ""
+        if group_id:
+            group_url = f"https://musicbrainz.org/ws/2/release-group/{group_id}?fmt=json&inc=genres"
+            group_data = requests.get(group_url, headers=headers).json()
+            if "genres" in group_data and group_data["genres"]:
+                genre = group_data["genres"][0]["name"]
+
+        print(f"✅ {filename} enregistrée dans {IMAGE_DIR}")
+        return {
+            "filename": filename,
+            "answer": f"{artist} {album}".lower(),
+            "genre": genre,
+            "language": language,
+            "date": date
+        }
+
+    except Exception as e:
+        print(f"❌ Erreur pour {artist} - {album} :", e)
+        return None
+
+def generate_sql(filepath_input, sql_output_path):
+    with open(filepath_input, "r", encoding="utf-8") as file, \
+         open(sql_output_path, "w", encoding="utf-8") as sql_output:
+
+        sql_output.write("-- SQL pour insertion enrichie dans la table `covers`\n")
+        sql_output.write("INSERT INTO covers (filename, answer, genre, langue, date_publication) VALUES\n")
+
+        lines = []
+        for line in file:
+            line = line.strip()
+            if " - " in line:
+                artist, album = line.split(" - ", 1)
+                data = get_cover_and_metadata(artist.strip(), album.strip())
+                if data:
+                    filename = data["filename"]
+                    answer = data["answer"].replace("'", "''")
+                    genre = data["genre"].replace("'", "''")
+                    lang = data["language"]
+                    date = data["date"] or "NULL"
+                    date_sql = f"'{date}'" if date != "NULL" else "NULL"
+
+                    lines.append(f"('{filename}', '{answer}', '{genre}', '{lang}', {date_sql})")
+            else:
+                print(f"⚠️ Ligne ignorée : {line}")
+
+        if lines:
+            sql_output.write(",\n".join(lines) + ";\n")
+        else:
+            sql_output.write("-- Aucune donnée à insérer\n")
+
+# Utilisation
+generate_sql("albums.txt", "insert_covers.sql")
