@@ -6,44 +6,44 @@ const mysql = require("mysql2/promise");
 const path = require("path");
 
 const app = express();
+
+// Autoriser les requêtes CORS
 app.use(cors());
 
 // Servir les images locales
 app.use("/images", express.static(path.join(__dirname, "public/images")));
 
 const server = http.createServer(app);
+
+// ✅ CORS correct ici
 const io = new Server(server, {
   cors: {
     origin: "http://localhost:5173",
     methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
-// Connexion MySQL (async)
+// Connexion MySQL
 let db;
 (async () => {
   db = await mysql.createConnection({
     host: "localhost",
     user: "root",
-    password: "", // remplace si nécessaire
+    password: "", // ajuste si besoin
     database: "GuessTheCover",
   });
   console.log("📦 Connecté à MySQL");
 })();
 
-const rooms = {}; // { roomName: [ { id, pseudo, ready } ] }
-const currentAnswers = {
-  // roomName: {
-  //   artist: 'nirvana',
-  //   album: 'nevermind',
-  //   foundArtist: false,
-  //   foundAlbum: false,
-  //   artistBy: '',
-  //   albumBy: ''
-  // }
-};
+// États en mémoire
+const rooms = {}; // { room: [ { id, pseudo, ready } ] }
+const scores = {}; // { room: { pseudo: score } }
+const rounds = {}; // { room: { round, totalRounds } }
+const currentAnswers = {}; // { room: { artist, album, ... } }
+
 io.on("connection", (socket) => {
-  console.log("🧩 Nouveau joueur :", socket.id);
+  console.log("🧩 Connexion :", socket.id);
 
   socket.on("joinRoom", ({ pseudo, room }) => {
     socket.join(room);
@@ -51,91 +51,77 @@ io.on("connection", (socket) => {
     if (!rooms[room]) rooms[room] = [];
     rooms[room].push({ id: socket.id, pseudo, ready: false });
 
+    if (!scores[room]) scores[room] = {};
+    if (!scores[room][pseudo]) scores[room][pseudo] = 0;
+
     io.to(room).emit("playersInRoom", rooms[room]);
+  });
+
+  socket.on("setRounds", ({ room, rounds: total }) => {
+    rounds[room] = { round: 0, totalRounds: total };
   });
 
   socket.on("playerReady", async ({ room, id }) => {
     const player = rooms[room]?.find((p) => p.id === id);
     if (player) player.ready = true;
 
-    const allReady =
-      rooms[room]?.length > 0 && rooms[room].every((p) => p.ready);
-
+    const allReady = rooms[room]?.every((p) => p.ready);
     if (allReady && db) {
-      const [rows] = await db.execute(
-        "SELECT * FROM covers ORDER BY RAND() LIMIT 1"
-      );
-      const cover = rows[0];
-
-      if (!cover) {
-        console.error("❌ Aucun cover disponible en base !");
-        io.to(room).emit(
-          "error",
-          "Aucune image disponible. Merci d'ajouter des covers."
-        );
-        return;
-      }
-      console.log(`🎵 Manche lancée pour la room ${room} :`);
-      console.log(`  - Artiste : ${cover.artist}`);
-      console.log(`  - Album   : ${cover.album}`);
-      console.log(`  - Image   : ${cover.filename}`);
-
-      io.to(room).emit("startGame");
-
-      io.to(room).emit("gameImage", {
-        imageUrl: `http://localhost:3001/images/${cover.filename}`,
-      });
-
-      currentAnswers[room] = {
-        artist: cover.answer_artist.toLowerCase(),
-        album: cover.answer_album.toLowerCase(),
-        foundArtist: false,
-        foundAlbum: false,
-        artistBy: "",
-        albumBy: "",
-      };
+      if (!rounds[room]) rounds[room] = { round: 0, totalRounds: 5 };
+      startNextRound(room);
     }
   });
 
   socket.on("guess", ({ room, pseudo, answer }) => {
     const state = currentAnswers[room];
-    if (!state) return;
+    if (!state || !answer) return;
 
     const input = answer.toLowerCase().trim();
-
-    let found = false;
+    let updated = false;
 
     if (!state.foundArtist && input === state.artist) {
       state.foundArtist = true;
       state.artistBy = pseudo;
-      found = true;
+      scores[room][pseudo] += 1;
+      updated = true;
     }
 
     if (!state.foundAlbum && input === state.album) {
       state.foundAlbum = true;
       state.albumBy = pseudo;
-      found = true;
+      scores[room][pseudo] += 2;
+      updated = true;
     }
 
-    if (found) {
+    if (updated) {
       io.to(room).emit("answerUpdate", {
         foundArtist: state.foundArtist,
         foundAlbum: state.foundAlbum,
         artistBy: state.artistBy,
         albumBy: state.albumBy,
       });
-
-      // Si les deux sont trouvés, on peut finir la manche
-      if (state.foundArtist && state.foundAlbum) {
-        io.to(room).emit("roundFinished", {
-          artist: state.artist,
-          album: state.album,
-          artistBy: state.artistBy,
-          albumBy: state.albumBy,
-        });
-        delete currentAnswers[room];
-      }
     }
+
+    if (state.foundArtist && state.foundAlbum) {
+      clearTimeout(state.timeoutId);
+      endRound(room);
+    }
+  });
+
+  socket.on("nextRound", () => {
+    startNextRound(socket.rooms.values().next().value);
+  });
+
+  socket.on("replay", ({ room }) => {
+    scores[room] = {};
+    rooms[room]?.forEach((p) => {
+      if (p.pseudo) scores[room][p.pseudo] = 0;
+      p.ready = false;
+    });
+    rounds[room] = { round: 0, totalRounds: 5 };
+
+    io.to(room).emit("scoreboard", scores[room]); // <- mise à jour côté client
+    io.to(room).emit("goToLobby");
   });
 
   socket.on("disconnect", () => {
@@ -145,6 +131,66 @@ io.on("connection", (socket) => {
     }
   });
 });
+
+// 🧠 Gestion du round
+async function startNextRound(room) {
+  if (!rounds[room]) rounds[room] = { round: 0, totalRounds: 5 };
+  rounds[room].round += 1;
+
+  if (rounds[room].round > rounds[room].totalRounds) {
+    io.to(room).emit("scoreboard", scores[room]);
+    io.to(room).emit("gameOver");
+    return;
+  }
+
+  const [rows] = await db.execute(
+    "SELECT * FROM covers ORDER BY RAND() LIMIT 1"
+  );
+  const cover = rows[0];
+  if (!cover) return;
+
+  console.log(
+    `🎵 [${room}] Round ${rounds[room].round} - ${cover.artist} / ${cover.album}`
+  );
+
+  const timeoutId = setTimeout(() => endRound(room), 10000);
+
+  currentAnswers[room] = {
+    artist: cover.answer_artist.toLowerCase(),
+    album: cover.answer_album.toLowerCase(),
+    foundArtist: false,
+    foundAlbum: false,
+    artistBy: "",
+    albumBy: "",
+    timeoutId,
+  };
+
+  io.to(room).emit("roundInfo", rounds[room]);
+  io.to(room).emit("startGame");
+  io.to(room).emit("gameImage", {
+    imageUrl: `http://localhost:3001/images/${cover.filename}`,
+  });
+}
+
+function endRound(room) {
+  const data = currentAnswers[room];
+  if (!data) return;
+
+  io.to(room).emit("roundFinished", {
+    artist: data.artist,
+    album: data.album,
+    artistBy: data.artistBy,
+    albumBy: data.albumBy,
+  });
+
+  io.to(room).emit("scoreboard", scores[room]);
+
+  setTimeout(() => {
+    startNextRound(room);
+  }, 10000);
+
+  delete currentAnswers[room];
+}
 
 server.listen(3001, () => {
   console.log("🚀 Serveur en ligne sur http://localhost:3001");

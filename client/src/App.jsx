@@ -1,7 +1,10 @@
-import { useState, useEffect } from "react";
-import Home from "./pages/Home";
+import { useEffect, useState } from "react";
 import { io } from "socket.io-client";
-import PixelatedImage from "./components/PixelatedImage";
+import Home from "./pages/Home";
+import Lobby from "./pages/Lobby";
+import Game from "./pages/Game";
+import RoundRecap from "./pages/RoundRecap";
+import Scoreboard from "./pages/Scoreboard";
 
 const socket = io("http://localhost:3001");
 
@@ -9,49 +12,52 @@ function App() {
   const [pseudo, setPseudo] = useState("");
   const [room, setRoom] = useState("");
   const [players, setPlayers] = useState([]);
-  const [isReady, setIsReady] = useState(false);
-  const [imageUrl, setImageUrl] = useState("");
-  const [pixelStep, setPixelStep] = useState(0);
-  const MAX_STEP = 7;
-  const [guess, setGuess] = useState("");
+  const [view, setView] = useState("home");
 
-  const [foundArtist, setFoundArtist] = useState(false);
-  const [foundAlbum, setFoundAlbum] = useState(false);
-  const [artistBy, setArtistBy] = useState("");
-  const [albumBy, setAlbumBy] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [roundInfo, setRoundInfo] = useState({ round: 0, totalRounds: 5 });
+  const [scores, setScores] = useState({});
+  const [recapData, setRecapData] = useState(null);
 
   useEffect(() => {
     socket.on("connect", () => {
-      console.log("🟢 Connecté au serveur :", socket.id);
+      console.log("🟢 Connecté au serveur", socket.id);
     });
 
     socket.on("playersInRoom", (list) => setPlayers(list));
 
     socket.on("startGame", () => {
-      console.log("🚀 Partie lancée");
-      setFoundArtist(false);
-      setFoundAlbum(false);
-      setArtistBy("");
-      setAlbumBy("");
+      setView("game");
     });
 
     socket.on("gameImage", ({ imageUrl }) => {
       setImageUrl(imageUrl);
-      setPixelStep(0);
     });
 
-    socket.on(
-      "answerUpdate",
-      ({ foundArtist, foundAlbum, artistBy, albumBy }) => {
-        setFoundArtist(foundArtist);
-        setFoundAlbum(foundAlbum);
-        setArtistBy(artistBy);
-        setAlbumBy(albumBy);
-      }
-    );
+    socket.on("answerUpdate", (data) => {
+      // géré dans Game.jsx
+    });
 
     socket.on("roundFinished", (data) => {
-      console.log("🏁 Manche terminée");
+      setRecapData({ ...data, imageUrl });
+      setView("recap");
+    });
+
+    socket.on("roundInfo", (info) => {
+      setRoundInfo(info);
+    });
+
+    socket.on("scoreboard", (allScores) => {
+      setScores(allScores);
+    });
+
+    socket.on("goToLobby", () => {
+      setScores({});
+      setView("lobby");
+    });
+
+    socket.on("gameOver", () => {
+      setView("scoreboard");
     });
 
     return () => {
@@ -61,101 +67,66 @@ function App() {
       socket.off("gameImage");
       socket.off("answerUpdate");
       socket.off("roundFinished");
+      socket.off("roundInfo");
+      socket.off("scoreboard");
+      socket.off("goToLobby");
+      socket.off("gameOver");
     };
-  }, []);
-
-  useEffect(() => {
-    if (imageUrl && pixelStep < MAX_STEP && !(foundArtist && foundAlbum)) {
-      const interval = setInterval(() => {
-        setPixelStep((prev) => prev + 1);
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [imageUrl, pixelStep, foundArtist, foundAlbum]);
+  }, [imageUrl]);
 
   const handleJoin = ({ pseudo, room }) => {
     setPseudo(pseudo);
     setRoom(room);
+    setView("lobby");
     socket.emit("joinRoom", { pseudo, room });
   };
 
-  const handleReady = () => {
-    socket.emit("playerReady", { room, id: socket.id });
-    setIsReady(true);
+  const handleReplay = () => {
+    setView("lobby");
+    socket.emit("replay", { room });
   };
 
-  const sendGuess = () => {
-    if (guess.trim()) {
-      socket.emit("guess", { room, pseudo, answer: guess });
-      setGuess("");
-    }
+  const handleNextRound = () => {
+    setRecapData(null);
+    socket.emit("nextRound", { room });
   };
 
-  if (!pseudo) return <Home onJoin={handleJoin} />;
+  // --- RENDU DES VUES ---
+  if (view === "home") return <Home onJoin={handleJoin} />;
 
-  return (
-    <div className="text-white text-center mt-10 text-3xl">
-      Bienvenue <span className="text-green-400">{pseudo}</span> dans la room{" "}
-      <span className="text-blue-400">{room}</span> 🎉
-      {!imageUrl && (
-        <>
-          <div className="mt-6 text-xl text-white">
-            Joueurs dans la room :
-            <ul className="mt-2">
-              {players.map((player) => (
-                <li key={player.id} className="text-green-400">
-                  {player.pseudo}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <button
-            onClick={handleReady}
-            disabled={isReady}
-            className="mt-6 px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded disabled:opacity-50"
-          >
-            {isReady ? "En attente des autres..." : "✅ Je suis prêt"}
-          </button>
-        </>
-      )}
-      {imageUrl && (
-        <div className="mt-10 flex flex-col items-center gap-4">
-          <PixelatedImage src={imageUrl} step={pixelStep} />
+  if (view === "lobby")
+    return (
+      <Lobby
+        socket={socket}
+        players={players}
+        room={room}
+        pseudo={pseudo}
+        scoreboard={scores}
+        roundInfo={roundInfo}
+      />
+    );
 
-          <div className="text-xl mt-4">
-            <p>
-              Artiste :{" "}
-              <span className={foundArtist ? "text-green-400" : "text-red-400"}>
-                {foundArtist ? `Trouvé par ${artistBy}` : "Non trouvé"}
-              </span>
-            </p>
-            <p>
-              Album :{" "}
-              <span className={foundAlbum ? "text-green-400" : "text-red-400"}>
-                {foundAlbum ? `Trouvé par ${albumBy}` : "Non trouvé"}
-              </span>
-            </p>
-          </div>
+  if (view === "game")
+    return (
+      <Game
+        socket={socket}
+        room={room}
+        pseudo={pseudo}
+        players={players}
+        imageUrl={imageUrl}
+        roundInfo={roundInfo}
+      />
+    );
 
-          <input
-            type="text"
-            placeholder="Devine artiste ou album"
-            value={guess}
-            onChange={(e) => setGuess(e.target.value)}
-            className="px-4 py-2 text-black rounded"
-            disabled={foundArtist && foundAlbum}
-          />
-          <button
-            onClick={sendGuess}
-            className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded"
-            disabled={foundArtist && foundAlbum}
-          >
-            Valider
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  if (view === "recap" && recapData)
+    return <RoundRecap data={recapData} onNext={handleNextRound} />;
+
+  if (view === "scoreboard")
+    return (
+      <Scoreboard scores={scores} players={players} onReplay={handleReplay} />
+    );
+
+  return <div className="text-white text-center mt-10">Chargement...</div>;
 }
 
 export default App;
